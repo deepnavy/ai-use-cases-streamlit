@@ -9,7 +9,19 @@ from langchain.chains.openai_functions import (
     create_extraction_chain
 )
 
+from langchain.callbacks.tracers.run_collector import RunCollectorCallbackHandler
+from langchain.schema.runnable import RunnableConfig
+from langsmith import Client
+
 import pandas as pd
+
+run_collector = RunCollectorCallbackHandler()
+runnable_config = RunnableConfig(
+    callbacks=[run_collector],
+    tags=["AI Use Case Finder"],
+)
+
+client = Client()
 
 
 SYSTEM_MESSAGE_BP_ANALYST= "You are a skillful UX Researcher who can generate insightful User Journey Maps. Your journey maps are always backed by real data and user interviews."
@@ -108,20 +120,39 @@ def extract_task_flow(task_flow):
             "stage": {
                 "title": "Stage", 
                 "description": "A broad categorization or phase of activities that represents a specific part or segment of a workflow or daily routine.", 
-                "type": "string"
+                "type": "string",
+                "enum": [
+                    "Day",
+                    "Morning",
+                    "Afternoon",
+                    "Evening",
+                    "Night",
+                    "Planning",
+                    "Organizing",
+                    "Working",
+                    "Finishing",
+                    "Reviewing",
+                    "Meeting",
+                    "Awareness",
+                    "Consideration",
+                    "Decision",
+                    "Retention",
+                    "Advocacy",
+                    "Onboarding"
+                ]
             },
             "task": {
                 "title": "Task", 
-                "description": "A specific activity or action that needs to be executed within its respective stage. It is more granular and provides explicit details about what needs to be done.", 
+                "description": "A specific activity or action that needs to be executed. It is more granular and provides explicit details about what needs to be done.", 
                 "type": "string"
             },
             "pain_point": {
                 "title": "Pain", 
-                "description": "A specific activity or action that needs to be executed within its respective stage. It is more granular and provides explicit details about what needs to be done.", 
+                "description": "A challenge or difficulty that the worker encounters while executing the task or during the workflow. It highlights areas that need attention or improvement.", 
                 "type": "string"
             }
         },
-        "required": ["stage", "task"],
+        "required": ["task"],
     }
 
     model_functions = ChatOpenAI(temperature=0, model="gpt-3.5-turbo-0613")
@@ -151,28 +182,13 @@ def find_ai_use_cases(task_flow_extracted, job_title, task_flow):
 
     usecase_chain = partial_prompt | model05
 
-    just_tasks = [{'task': item['task'], 'pain_point': item.get("pain_point", "No pain point")} for item in task_flow_extracted]
+    just_tasks = [{'task': item['task'], 'pain_point': item.get("pain_point", "Not identified")} for item in task_flow_extracted]
 
-    response_batch = usecase_chain.batch(just_tasks)
+    response_batch = usecase_chain.batch(just_tasks, config=runnable_config)
+
+    st.session_state['run_ids'] = [str(run.id) for run in run_collector.traced_runs]
 
     return response_batch
-
-# Function to extract relevant information from AIMessage objects and convert to DataFrame
-def aimessages_to_dataframe(ai_messages, extracted_json):
-    data = []
-
-    for idx, message in enumerate(ai_messages):
-        # This will match the AIMessage to the respective stage and task based on index
-        # stage = extracted_json[idx]['stage']
-        task = extracted_json[idx]['task']
-
-        use_case = message.content
-        
-        data.append([task, use_case])
-
-    df = pd.DataFrame(data, columns=["Task", "AI Use Case"])
-
-    return df
 
 
 def map_aimessages_to_tasks(ai_messages, extracted_json):
@@ -180,7 +196,7 @@ def map_aimessages_to_tasks(ai_messages, extracted_json):
 
     for ai_message, task_data in zip(ai_messages, extracted_json):
         mapped_entry = {
-            "Stage": task_data["stage"],
+            # "Stage": task_data["stage"],
             "Task": task_data["task"],
             "AI Use Case": ai_message.content
         }
@@ -188,94 +204,117 @@ def map_aimessages_to_tasks(ai_messages, extracted_json):
 
     return mapped_data
 
+def send_feedback():
+    for run_id in st.session_state.run_ids:
+        if st.session_state[run_id]:
+            client.create_feedback(run_id, "user_score", score=True)
+    
+
 def display_mapped_data(mapped_data):
-    with st.container():
-        col_header1, col_header2 = st.columns([2, 5])
-        with col_header1:
-            st.markdown("**Task**")
-        with col_header2:
-            st.markdown("**Generative AI Use Case**")
-        add_grey_line()
-
-    for entry in mapped_data:
+    with st.form(key="fake_form"):
         with st.container():
-            col1, col2 = st.columns([2, 5])
-            
-            # Task column
-            with col1:
-                st.markdown(entry['Task'])
-            
-            # AI Use Case column
-            with col2:
-                st.markdown(entry['AI Use Case'])
+            col_header1, col_header2, col_header3 = st.columns([2, 5, 1])
+            with col_header1:
+                st.markdown("**Task**")
+            with col_header2:
+                st.markdown("**Generative AI Use Case**")
+            with col_header3:
+                st.markdown("**Rate**")
+            add_grey_line()
 
-        add_grey_line()
+        run_ids = st.session_state['run_ids']
+
+        for index, entry in enumerate(mapped_data):
+            with st.container():
+                col1, col2, col3 = st.columns([2, 5, 1])
+                
+                # Task column
+                with col1:
+                    st.markdown(entry['Task'])
+                
+                # AI Use Case column
+                with col2:
+                    st.markdown(entry['AI Use Case'])
+
+                with col3:
+                    st.checkbox('👍', key=run_ids[index])
+
+            add_grey_line()
+    
+        st.form_submit_button(label="Submit ratings", type="primary", on_click=send_feedback, use_container_width=True)
+
+    # st.write(mapped_data)
+
+
 
 def add_grey_line():
     st.markdown("<hr style='border:1px solid #F0F0F0; margin-top:0px; margin-bottom:1rem;'>", unsafe_allow_html=True)
 
 
-
-
 def app():
+    if 'key' not in st.session_state:
+        st.session_state['checkboxes'] = []
+
+    st.session_state['run_ids'] = []
+    
     st.title("Generative AI Use Case Finder")
     st.markdown("This app helps you find Generative AI use cases for your job title and tasks.")
 
-    tab1, tab2 = st.tabs(["Direct Task Flow Input", "Job Title & Description"])
+    # tab1, tab2 = st.tabs(["Direct Task Flow Input", "Job Title & Description"])
 
-    with tab1:
-        job_title = st.text_input("Job Title", key="job_title_flow1")
-        
-        task_flow = st.text_area("Tasks Map", height=200)
+    # with tab1:
+    job_title = st.text_input("Job Title", key="job_title_flow1")
+    
+    task_flow = st.text_area("Tasks Map", height=200)
 
-        # Button to generate task flow
-        if st.button('Find AI Use Cases'):
-            # Check if job title or description are empty
-            if not job_title or not task_flow:
-                st.error("Please enter both a task flow before proceeding.")
-            else:
-                st.markdown(f"### AI use cases for {job_title}")
-                with st.spinner('Extracting tasks from tasks map'):
-                    extracted_json = extract_task_flow(task_flow)
-                    # st.markdown("### Extracted JSON:")
-                    # with st.expander("See Extracted JSON"):
-                    #     st.json(extracted_json)
+    # Button to generate task flow
+    if st.button('Find AI Use Cases'):
+        # Check if job title or description are empty
+        if not job_title or not task_flow:
+            st.error("Please enter both a task flow before proceeding.")
+        else:
+            st.markdown(f"### AI use cases for {job_title}")
+            st.caption("Help us improve response quality by checking relevant use cases and hitting 'Submit ratings' at the bottom of the form.")
+            with st.spinner('Extracting tasks from tasks map'):
+                extracted_json = extract_task_flow(task_flow)
+                # with st.expander("See Extracted JSON"):
+                #     st.json(extracted_json)
 
-                    # Convert JSON to DataFrame and display
-                with st.spinner('Finding AI Use Cases'):
-                    ai_usecases = find_ai_use_cases(extracted_json, job_title, task_flow)
-                    mapped_tasks = map_aimessages_to_tasks(ai_usecases, extracted_json)
-                    display_mapped_data(mapped_tasks)
+                # Convert JSON to DataFrame and display
+            with st.spinner('Finding AI Use Cases'):
+                ai_usecases = find_ai_use_cases(extracted_json, job_title, task_flow)
+                mapped_tasks = map_aimessages_to_tasks(ai_usecases, extracted_json)
+                display_mapped_data(mapped_tasks)
 
     
-    with tab2:
-        # Input fields
-        job_title = st.text_input("Job Title", key="job_title_flow2")
-        job_description = st.text_area("Job Description", height=300)
+    # with tab2:
+    #     # Input fields
+    #     job_title = st.text_input("Job Title", key="job_title_flow2")
+    #     job_description = st.text_area("Job Description", height=300)
 
-        # Button to generate task flow
-        if st.button('Generate task flow'):
-            # Check if job title or description are empty
-            if not job_title or not job_description:
-                st.error("Please enter both a job title and description before generating task flow.")
-            else:
-                with st.spinner('Generating task flow...'):
-                    task_flow = generate_task_flow(job_title, job_description)
-                    st.markdown("### Generated Task Flow:")
-                    with st.expander("See Generated Task Flow"):
-                        st.write(task_flow)
+    #     # Button to generate task flow
+    #     if st.button('Generate task flow'):
+    #         # Check if job title or description are empty
+    #         if not job_title or not job_description:
+    #             st.error("Please enter both a job title and description before generating task flow.")
+    #         else:
+    #             with st.spinner('Generating task flow...'):
+    #                 task_flow = generate_task_flow(job_title, job_description)
+    #                 st.markdown("### Generated Task Flow:")
+    #                 with st.expander("See Generated Task Flow"):
+    #                     st.write(task_flow)
 
-                with st.spinner('Extracting JSON from task flow...'):
-                    extracted_json = extract_task_flow(task_flow)
-                    st.markdown("### Extracted JSON:")
-                    with st.expander("See Extracted JSON"):
-                        st.json(extracted_json)
+    #             with st.spinner('Extracting JSON from task flow...'):
+    #                 extracted_json = extract_task_flow(task_flow)
+    #                 st.markdown("### Extracted JSON:")
+    #                 with st.expander("See Extracted JSON"):
+    #                     st.json(extracted_json)
 
-                    # Convert JSON to DataFrame and display
-                with st.spinner('Finding AI Use Cases'):
-                    ai_usecases = find_ai_use_cases(extracted_json, job_title, task_flow)
-                    df = aimessages_to_dataframe(ai_usecases, extracted_json)
-                    st.dataframe(df)
+    #                 # Convert JSON to DataFrame and display
+    #             with st.spinner('Finding AI Use Cases'):
+    #                 ai_usecases = find_ai_use_cases(extracted_json, job_title, task_flow)
+    #                 df = aimessages_to_dataframe(ai_usecases, extracted_json)
+    #                 st.dataframe(df)
         
    
 
