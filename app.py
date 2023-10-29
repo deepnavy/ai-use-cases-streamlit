@@ -23,6 +23,15 @@ runnable_config = RunnableConfig(
 
 client = Client()
 
+st.set_page_config(
+    page_title="Generative AI Use Case Ideator",
+    page_icon="🤖",
+    menu_items={
+        'Get Help': 'https://twitter.com/deepnavy',
+        'About': "# This is a header. This is an *extremely* cool app!"
+    }
+)
+
 
 SYSTEM_MESSAGE_BP_ANALYST= "You are a skillful UX Researcher who can generate insightful User Journey Maps. Your journey maps are always backed by real data and user interviews."
 
@@ -50,12 +59,11 @@ The task flow in markdown format:
 
 SYSTEM_MESSAGE_USE_CASE_FINDER = "You are an AI consultant who helps companies find use cases for Generative AI, Large Language Models, and other GPTs in their processes to make business more effective and customers more productive."
 
-PROMPT_USE_CASE_FINDER = """
-Instructions:
+PROMPT_USE_CASE_FINDER = """Instructions:
 - I'll give you a task flow of the process of one of the job roles in my company. 
 - You need to focus on analyzing a specific task that I'll specify.
 - Take into account the pain point related to the task if specified.
-- Important to focus on Generative AI, LLMs and GPTs use cases specifically and not on AI and Machine Learning overall
+- Important to focus on Generative AI, LLMs and GPTs use cases specifically and not on AI and Machine Learning overall.
 - If you can't come up with a Generative AI, Large Language Models, and other GPTs use case for a particular task of the flow, find a subtask of the specified task that will be suitable for that and describe an AI use case for that.
 - If there is no suitable subtask, indicate clearly that you can't find a use case.
 
@@ -73,7 +81,7 @@ Pain point related to the task:
 {pain_point}
 
 Format of the response:
-**Generative AI use case**: <name of the Generative AI, LLMs, GPTs use case>
+#### <name of the Generative AI, LLMs, GPTs use case>
 
 **Description**: <description of the AI use case solution>
 
@@ -86,8 +94,39 @@ Take a deep breath and think step-by-step about why you chose a particular use c
 Think thouroghly if there is really an AI use case.
 """
 
-# **Generative AI use case**: <name of the Generative AI, LLMs, GPTs use case>
+demo_job_title = "Performance Fitness Coach"
 
+demo_task_map = """Stage: Client onboarding
+
+Task: Send a welcome email to the client
+Pain point: We want to make it more personalized, but since the email sending process is manual, we end up spending a lot of time going through various surveys and notes related to the client before sending it.
+
+Stage: Start of the program
+
+Task: Prepare an exercise plan
+Pain point: Even though we have a library of exercise plans, it's better for the coach to personally choose and modify them to suit the client's needs. They should review the client's information, which can be time-consuming.
+
+Task: Set up first training session
+Pain point: Even though we use calendly integrated into our app to schedule the time for sessions, sometimes coaches struggle with starting the conversation in the chat, which makes the communication very slow.
+
+Stage: During the program
+
+Task: Send a memo outlining the things to take into account during the next solo training sessions.
+Pain point: Coaches spend a lot of time recalling what they said during the session and then preparing the email itself. Since they have many back-to-back sessions, creating these memos often leads to overtime.
+"""
+
+task_flow_help_text = """Task Map is a simplified version of a User Journey Map that only includes Stages, Tasks, and related Pain Points.
+    
+Don't worry about the specific structure; the system is intelligent enough to extract the elements from the Task Map provided in a free form."""
+
+task_flow_placeholder_text = """Enter stages, tasks, and pain points for the specified role.
+
+Example:
+Stage: Client onboarding
+
+Task: Send a welcome email to the client
+Pain point: We want to make it more personalized, but since the email sending process is manual,
+"""
 
 def generate_task_flow(job_title, job_description):
     template = ChatPromptTemplate.from_messages(
@@ -178,9 +217,9 @@ def find_ai_use_cases(task_flow_extracted, job_title, task_flow):
 
     partial_prompt = template.partial(job_title=job_title, task_flow=task_flow);
 
-    model05 = ChatOpenAI(temperature=0.5, model="gpt-3.5-turbo")
+    model = ChatOpenAI(temperature=0.7, model="gpt-3.5-turbo")
 
-    usecase_chain = partial_prompt | model05
+    usecase_chain = partial_prompt | model
 
     just_tasks = [{'task': item['task'], 'pain_point': item.get("pain_point", "Not identified")} for item in task_flow_extracted]
 
@@ -209,9 +248,11 @@ def send_feedback():
         if st.session_state[run_id]:
             client.create_feedback(run_id, "user_score", score=True)
     
+    st.session_state.run_after_submit = True
+    
 
 def display_mapped_data(mapped_data):
-    with st.form(key="fake_form"):
+    with st.form(key="submit_form", clear_on_submit=False):
         with st.container():
             col_header1, col_header2, col_header3 = st.columns([2, 5, 1])
             with col_header1:
@@ -245,6 +286,38 @@ def display_mapped_data(mapped_data):
 
     # st.write(mapped_data)
 
+def display_mapped_data_after_submit(mapped_data, job_title):
+
+    st.markdown(f"### AI use cases for {job_title}")
+
+    with st.form(key="fake_form", clear_on_submit=False):
+        with st.container():
+            col_header1, col_header2 = st.columns([2, 5])
+            with col_header1:
+                st.markdown("**Task**")
+            with col_header2:
+                st.markdown("**Generative AI Use Case**")
+            add_grey_line()
+
+        for index, entry in enumerate(mapped_data):
+            with st.container():
+                col1, col2 = st.columns([2, 5])
+                
+                # Task column
+                with col1:
+                    st.markdown(entry['Task'])
+                
+                # AI Use Case column
+                with col2:
+                    st.markdown(entry['AI Use Case'])
+
+            add_grey_line()
+
+        st.success('Thank you for submitting the ratings!', icon="✅")
+        
+        st.form_submit_button(label="Submit ratings", type="primary", use_container_width=True, disabled=True)
+
+
 
 
 def add_grey_line():
@@ -252,23 +325,64 @@ def add_grey_line():
 
 
 def app():
-    if 'key' not in st.session_state:
-        st.session_state['checkboxes'] = []
+
+    st.markdown("""
+        <style>
+            h4 {
+                padding-top: 0 !important;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+
 
     st.session_state['run_ids'] = []
-    
-    st.title("Generative AI Use Case Finder")
-    st.markdown("This app helps you find Generative AI use cases for your job title and tasks.")
 
-    # tab1, tab2 = st.tabs(["Direct Task Flow Input", "Job Title & Description"])
+    if 'demo_job_title' not in st.session_state:
+        st.session_state.demo_job_title = ""
+
+    if 'demo_task_map' not in st.session_state:   
+        st.session_state.demo_task_map = ""
+
+    if 'mapped_tasks' not in st.session_state:   
+        st.session_state.mapped_tasks = []
+
+    if 'run_after_submit' not in st.session_state:   
+        st.session_state.run_after_submit = False
+    
+    st.title("Generative AI Use Case Ideator")
+
+    with st.container():
+
+        # Split the container into two columns
+        col1, col2 = st.columns([3, 1])
+
+        # Place the input and textarea in the first column
+        with col1:
+            st.markdown("This app can help you brainstorm how your business can be automated with Generative AI by providing a Role and a Task Map for this role.")
+            st.caption("Need some inspiration or guidance? Click 'Use example data' to get started.")
+
+
+        # Place the button in the second column
+        with col2:
+            if st.button("Use example data"):
+                st.session_state.demo_job_title = demo_job_title
+                st.session_state.demo_task_map = demo_task_map
+                st.rerun()
 
     # with tab1:
-    job_title = st.text_input("Job Title", key="job_title_flow1")
+    job_title = st.text_input("Role", value=st.session_state.demo_job_title, key="job_title_flow1", placeholder="Enter a role")
     
-    task_flow = st.text_area("Tasks Map", height=200)
+    task_flow = st.text_area("Tasks Map", value=st.session_state.demo_task_map, height=200, help=task_flow_help_text, placeholder=task_flow_placeholder_text)
 
+    # if 'mapped_tasks' in st.session_state and st.session_state.mapped_tasks:
+    #     display_mapped_data(st.session_state.mapped_tasks)
+
+    # st.button('Find AI Use Cases', type="primary", use_container_width=True, on_click=find_ai_use_cases_flow, args=(job_title, task_flow))
+    
     # Button to generate task flow
-    if st.button('Find AI Use Cases'):
+    if st.button('Find AI Use Cases', type="primary", use_container_width=True):
+        st.session_state.run_after_submit = False
+        st.session_state.mapped_tasks = []
         # Check if job title or description are empty
         if not job_title or not task_flow:
             st.error("Please enter both a task flow before proceeding.")
@@ -285,37 +399,14 @@ def app():
                 ai_usecases = find_ai_use_cases(extracted_json, job_title, task_flow)
                 mapped_tasks = map_aimessages_to_tasks(ai_usecases, extracted_json)
                 display_mapped_data(mapped_tasks)
+                st.session_state.mapped_tasks = mapped_tasks
 
-    
-    # with tab2:
-    #     # Input fields
-    #     job_title = st.text_input("Job Title", key="job_title_flow2")
-    #     job_description = st.text_area("Job Description", height=300)
+    if 'mapped_tasks' in st.session_state and st.session_state.mapped_tasks and st.session_state.run_after_submit:
+        display_mapped_data_after_submit(st.session_state.mapped_tasks, job_title)
 
-    #     # Button to generate task flow
-    #     if st.button('Generate task flow'):
-    #         # Check if job title or description are empty
-    #         if not job_title or not job_description:
-    #             st.error("Please enter both a job title and description before generating task flow.")
-    #         else:
-    #             with st.spinner('Generating task flow...'):
-    #                 task_flow = generate_task_flow(job_title, job_description)
-    #                 st.markdown("### Generated Task Flow:")
-    #                 with st.expander("See Generated Task Flow"):
-    #                     st.write(task_flow)
 
-    #             with st.spinner('Extracting JSON from task flow...'):
-    #                 extracted_json = extract_task_flow(task_flow)
-    #                 st.markdown("### Extracted JSON:")
-    #                 with st.expander("See Extracted JSON"):
-    #                     st.json(extracted_json)
 
-    #                 # Convert JSON to DataFrame and display
-    #             with st.spinner('Finding AI Use Cases'):
-    #                 ai_usecases = find_ai_use_cases(extracted_json, job_title, task_flow)
-    #                 df = aimessages_to_dataframe(ai_usecases, extracted_json)
-    #                 st.dataframe(df)
-        
+
    
 
 if __name__ == "__main__":
