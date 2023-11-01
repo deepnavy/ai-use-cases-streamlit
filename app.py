@@ -28,7 +28,7 @@ st.set_page_config(
     page_icon="🤖",
     menu_items={
         'Get Help': 'https://twitter.com/deepnavy',
-        'About': "# This is a header. This is an *extremely* cool app!"
+        'About': "This app automates the process of finding AI use cases for your product. \n\n Check out the Substack post for more details: https://petrov.substack.com/p/how-to-find-generative-ai-use-cases"
     }
 )
 
